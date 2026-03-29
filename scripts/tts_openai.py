@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-# OpenAI TTS 음성 생성 스크립트 — 텍스트 파일을 MP3로 변환
+# OpenAI TTS 음성 생성 스크립트
+# 2가지 모드: 전체 파일 → 단일 MP3 / 섹션별 분리 → 카드별 MP3 + timings JSON
 import sys
 import json
 import argparse
+import subprocess
 from pathlib import Path
 
 
@@ -19,14 +21,72 @@ def load_env(env_file):
     return env
 
 
+def strip_markdown(text):
+    """마크다운 문법 제거 → 순수 나레이션 텍스트"""
+    lines = []
+    for line in text.split('\n'):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#') or stripped.startswith('---') or stripped.startswith('>'):
+            continue
+        lines.append(stripped)
+    return '\n'.join(lines).strip()
+
+
+def parse_sections(md_text):
+    """## 헤더 기준으로 섹션 분리 → [{title, text}]"""
+    sections = []
+    current_title = None
+    current_lines = []
+
+    for line in md_text.split('\n'):
+        stripped = line.strip()
+        if stripped.startswith('## '):
+            if current_title is not None:
+                text = strip_markdown('\n'.join(current_lines))
+                if text:
+                    sections.append({"title": current_title, "text": text})
+            current_title = stripped[3:].strip()
+            current_lines = []
+        else:
+            current_lines.append(line)
+
+    if current_title is not None:
+        text = strip_markdown('\n'.join(current_lines))
+        if text:
+            sections.append({"title": current_title, "text": text})
+
+    return sections
+
+
+def get_duration(filepath):
+    """ffprobe로 MP3 재생 시간 측정"""
+    try:
+        result = subprocess.run(
+            ['ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+             '-of', 'csv=p=0', str(filepath)],
+            capture_output=True, text=True
+        )
+        return float(result.stdout.strip()) if result.stdout.strip() else 0
+    except Exception:
+        return 0
+
+
+def generate_single(client, model, voice, text, output_path):
+    """단일 MP3 생성"""
+    response = client.audio.speech.create(model=model, voice=voice, input=text)
+    response.stream_to_file(str(output_path))
+
+
 def main():
     parser = argparse.ArgumentParser(description='OpenAI TTS 음성 생성')
-    parser.add_argument('--input', required=True, help='입력 텍스트 파일')
-    parser.add_argument('--output', required=True, help='출력 MP3 파일')
-    parser.add_argument('--voice', default='nova',
+    parser.add_argument('--input', required=True, help='입력 마크다운/텍스트 파일')
+    parser.add_argument('--output', required=True, help='출력 경로 (파일 또는 디렉토리)')
+    parser.add_argument('--voice', default='shimmer',
                         choices=['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer'])
     parser.add_argument('--model', default='tts-1-hd')
     parser.add_argument('--env-file', required=True)
+    parser.add_argument('--section-mode', action='store_true',
+                        help='섹션별 분리 모드: ## 헤더 기준으로 카드별 MP3 생성 + card-timings.json')
     args = parser.parse_args()
 
     # .env 로드
@@ -43,37 +103,12 @@ def main():
                           "message": "OPENAI_API_KEY가 .env에 설정되지 않았습니다."}))
         sys.exit(1)
 
-    # 입력 파일 읽기
     input_path = Path(args.input)
     if not input_path.exists():
         print(json.dumps({"success": False, "error": "INPUT_NOT_FOUND",
                           "message": f"입력 파일을 찾을 수 없습니다: {args.input}"}))
         sys.exit(1)
 
-    raw_text = input_path.read_text(encoding='utf-8').strip()
-
-    # 마크다운 파싱 — 순수 나레이션 텍스트만 추출
-    lines = []
-    for line in raw_text.split('\n'):
-        stripped = line.strip()
-        # 제거: 헤더(#), 구분선(---), 인용(>), 빈 줄
-        if not stripped:
-            continue
-        if stripped.startswith('#'):
-            continue
-        if stripped.startswith('---'):
-            continue
-        if stripped.startswith('>'):
-            continue
-        lines.append(stripped)
-    text = '\n'.join(lines).strip()
-
-    if not text:
-        print(json.dumps({"success": False, "error": "EMPTY_INPUT",
-                          "message": "입력 파일이 비어 있습니다."}))
-        sys.exit(1)
-
-    # OpenAI TTS API 호출 (최대 4096자 제한 → 분할 처리)
     try:
         from openai import OpenAI
     except ImportError:
@@ -82,69 +117,74 @@ def main():
         sys.exit(1)
 
     client = OpenAI(api_key=api_key)
+    raw_text = input_path.read_text(encoding='utf-8').strip()
+
+    # ── 섹션 모드 ──
+    if args.section_mode:
+        sections = parse_sections(raw_text)
+        if not sections:
+            print(json.dumps({"success": False, "error": "NO_SECTIONS",
+                              "message": "## 헤더로 구분된 섹션을 찾을 수 없습니다."}))
+            sys.exit(1)
+
+        output_dir = Path(args.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        results = []
+        for i, section in enumerate(sections):
+            num = str(i + 1).zfill(2)
+            mp3_path = output_dir / f"card-{num}.mp3"
+            print(f"[{num}/{len(sections)}] {section['title'][:40]}...", file=sys.stderr)
+
+            try:
+                generate_single(client, args.model, args.voice, section['text'], mp3_path)
+            except Exception as e:
+                print(json.dumps({"success": False, "error": "TTS_ERROR",
+                                  "message": f"카드 {num} TTS 실패: {e}"}))
+                sys.exit(1)
+
+            duration = get_duration(mp3_path)
+            frames = round(duration * 30)
+            results.append({
+                "card": i + 1,
+                "title": section['title'],
+                "duration_sec": round(duration, 2),
+                "frames": frames,
+                "file": f"card-{num}.mp3"
+            })
+
+        # card-timings.json 저장
+        timings_path = output_dir / "card-timings.json"
+        with open(timings_path, 'w') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+
+        total_sec = sum(r['duration_sec'] for r in results)
+        total_frames = sum(r['frames'] for r in results)
+        print(json.dumps({
+            "success": True,
+            "mode": "section",
+            "sections": len(results),
+            "total_duration_sec": round(total_sec, 2),
+            "total_frames": total_frames,
+            "timings_path": str(timings_path.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "voice": args.voice,
+            "model": args.model
+        }, ensure_ascii=False))
+        return
+
+    # ── 단일 모드 (기본) ──
+    text = strip_markdown(raw_text)
+    if not text:
+        print(json.dumps({"success": False, "error": "EMPTY_INPUT",
+                          "message": "입력 파일이 비어 있습니다."}))
+        sys.exit(1)
+
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 4096자 이하면 한 번에, 초과하면 분할
-    MAX_CHARS = 4096
-    chunks = []
-    if len(text) <= MAX_CHARS:
-        chunks = [text]
-    else:
-        # 문단 단위로 분할
-        paragraphs = text.split('\n\n')
-        current = ""
-        for p in paragraphs:
-            if len(current) + len(p) + 2 > MAX_CHARS:
-                if current:
-                    chunks.append(current)
-                current = p
-            else:
-                current = current + "\n\n" + p if current else p
-        if current:
-            chunks.append(current)
-
     try:
-        if len(chunks) == 1:
-            response = client.audio.speech.create(
-                model=args.model, voice=args.voice, input=chunks[0]
-            )
-            response.stream_to_file(str(output_path))
-        else:
-            # 분할 생성 후 합치기
-            import tempfile
-            temp_files = []
-            for i, chunk in enumerate(chunks):
-                temp_path = output_path.parent / f"_chunk_{i}.mp3"
-                response = client.audio.speech.create(
-                    model=args.model, voice=args.voice, input=chunk
-                )
-                response.stream_to_file(str(temp_path))
-                temp_files.append(temp_path)
-
-            # ffmpeg로 합치기 (없으면 첫 번째 청크만 사용)
-            import subprocess
-            list_file = output_path.parent / "_concat_list.txt"
-            with open(list_file, 'w') as f:
-                for tf in temp_files:
-                    f.write(f"file '{tf}'\n")
-            result = subprocess.run(
-                ['ffmpeg', '-y', '-f', 'concat', '-safe', '0',
-                 '-i', str(list_file), '-c', 'copy', str(output_path)],
-                capture_output=True, text=True
-            )
-            # 정리
-            for tf in temp_files:
-                tf.unlink(missing_ok=True)
-            list_file.unlink(missing_ok=True)
-
-            if result.returncode != 0:
-                # ffmpeg 실패 시 첫 번째 청크를 결과로
-                import shutil
-                first_chunk = output_path.parent / "_chunk_0.mp3"
-                if first_chunk.exists():
-                    shutil.copy2(first_chunk, output_path)
-
+        generate_single(client, args.model, args.voice, text, output_path)
     except Exception as e:
         print(json.dumps({"success": False, "error": "TTS_ERROR",
                           "message": f"TTS 생성 실패: {e}"}))
@@ -153,11 +193,11 @@ def main():
     size_kb = round(output_path.stat().st_size / 1024, 1)
     print(json.dumps({
         "success": True,
+        "mode": "single",
         "output_path": str(output_path.resolve()),
         "file_size_kb": size_kb,
         "voice": args.voice,
-        "model": args.model,
-        "chunks": len(chunks)
+        "model": args.model
     }, ensure_ascii=False))
 
 

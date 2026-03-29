@@ -223,26 +223,19 @@ HTML 요구사항:
 ```
 "영상에 어떤 오디오를 넣을까요?"
 옵션:
-- "TTS 나레이션 (추천)" — AI 음성으로 카드별 설명을 읽어줘요. 정보 전달에 좋아요.
+- "오디오 없이 (추천)" — 무음 영상으로 만들어요. 카드뉴스 자체로 충분해요.
+- "TTS 나레이션" — AI 음성으로 카드별 설명을 읽어줘요. (OpenAI API 키 필요, 유료)
 - "배경 음악만" — 가지고 있는 음악 파일을 깔아요. 감성적인 영상에 어울려요.
-- "TTS + 배경 음악" — 나레이션 위에 잔잔한 배경 음악도 깔아요.
-- "오디오 없이" — 무음 영상으로 만들어요.
+- "TTS + 배경 음악" — 나레이션 위에 배경 음악도 깔아요. (OpenAI API 키 필요, 유료)
 ```
+
+**무음 선택 시 → Step 6으로 바로 진행** (카드당 기본 5초)
 
 **TTS 선택 시 → 나레이션 스크립트 작성:**
 
-카드뉴스 기획서를 기반으로 나레이션 원고를 작성한다.
+카드뉴스 기획서를 기반으로 **카드 1장 = 섹션 1개** 구조로 나레이션 원고를 작성한다.
 
 스크립트 구조:
-- 인트로: 주제 소개 (약 10초)
-- 본문: 카드별 설명 (카드당 10~20초, 내용에 따라 가변)
-- 아웃트로: 요약 + CTA (약 10초)
-- 총 길이: 2~4분
-- 톤: 친근하지만 전문적
-
-**카드별 타이밍 매핑 필수:**
-각 섹션에 `(약 XX초)` 형태로 시간을 명시한다. 이 시간이 Remotion 영상의 카드별 표시 시간이 된다.
-
 ```
 ## 인트로 (약 10초)
 나레이션 텍스트...
@@ -251,10 +244,10 @@ HTML 요구사항:
 나레이션 텍스트...
 ```
 
-TTS 친화적 텍스트 규칙:
-- 영문 브랜드명 한글 발음 병기
-- 숫자+단위 자연스러운 읽기 형태
-- 줄임말 풀어쓰기
+규칙:
+- 카드 수와 섹션 수가 정확히 일치해야 한다 (13장이면 13섹션)
+- TTS 친화적: 영문→한글 발음 병기, 숫자 풀어쓰기, 줄임말 풀어쓰기
+- 톤: 친근하지만 전문적
 
 출력: `{output}/05-tts-script.md`
 
@@ -265,58 +258,92 @@ TTS 친화적 텍스트 규칙:
 **체크포인트** — AskUserQuestion:
 ```
 "나레이션 원고예요. 톤이나 길이를 확인해주세요." (TTS 시)
-또는 "이 배경 음악 어떠세요?" (BGM 시)
 옵션: 진행 (추천) / 수정 요청 / 여기서 종료
 ```
 
 ### Step 6: 음성 생성 + 영상화
 **타입**: script
 
-**6-1. OpenAI TTS 음성 생성 (TTS 선택 시):**
+**6-1. 카드별 TTS 음성 생성 (TTS 선택 시):**
 
-`.env`의 `OPENAI_API_KEY`를 사용하여 TTS 음성을 생성한다.
+`--section-mode`로 TTS 스크립트를 자동 분리하여 카드별 MP3 + 타이밍 JSON을 한 번에 생성한다.
 
 ```bash
 python3 "${SKILL_DIR}/scripts/tts_openai.py" \
   --input "{output}/05-tts-script.md" \
-  --output "{output}/audio/narration.mp3" \
+  --output "{output}/audio/cards" \
   --voice "shimmer" \
+  --section-mode \
   --env-file "${SKILL_DIR}/.env"
 ```
 
-음성 옵션: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer` (기본: shimmer)
+이 명령 하나로:
+- `## ` 헤더 기준 섹션 자동 분리
+- 마크다운 문법 자동 제거 (순수 나레이션만 추출)
+- 카드별 MP3 생성: `card-01.mp3` ~ `card-{N}.mp3`
+- 각 MP3의 실제 재생 시간 ffprobe로 측정
+- `card-timings.json` 자동 생성:
+```json
+[
+  {"card": 1, "duration_sec": 10.32, "frames": 310, "file": "card-01.mp3"},
+  {"card": 2, "duration_sec": 17.06, "frames": 512, "file": "card-02.mp3"}
+]
+```
 
-실패 시: "음성 생성에 실패했어요. 나레이션 원고는 완성됐으니 직접 녹음하셔도 돼요."
-
-출력: `{output}/audio/narration.mp3`
+출력: `{output}/audio/cards/card-*.mp3` + `card-timings.json`
 
 **6-2. Remotion 영상 렌더링 (React 컴포넌트 방식):**
 
-card-news.html의 CSS/레이아웃을 **React JSX 컴포넌트로 변환**하여 Remotion에서 직접 렌더링한다. 캡처 이미지가 아닌 실제 텍스트+이미지를 렌더링하므로 텍스트가 선명하고 애니메이션이 가능하다.
+card-news.html의 CSS/레이아웃을 **React JSX 컴포넌트로 변환**하여 Remotion에서 직접 렌더링한다.
 
-1. `{output}/remotion/` 폴더에 Remotion 프로젝트 구성
-2. card-news.html의 각 카드(section)를 **개별 React 컴포넌트**로 변환:
-   - `src/cards/Card01.tsx` ~ `Card{N}.tsx`
-   - CSS → React 인라인 스타일 (CSSProperties)
-   - 이미지: `staticFile("card-XX.png")` 참조
-   - 한국어 텍스트 내용 그대로 유지
-   - 레이아웃(풀블리드/스플릿/오버레이 등) 카드별로 다르게 구현
-3. 각 카드에 **텍스트 애니메이션** 적용 (useCurrentFrame + interpolate):
-   - 0.3초: 배경/이미지 페이드인
-   - 0.5초: 제목 페이드인 + 슬라이드 업
-   - 0.8초: 본문 텍스트 페이드인
-   - 마지막 0.5초: 전체 페이드아웃
-4. `{output}/images/` + `{output}/audio/narration.mp3` → `public/` 폴더에 복사
-5. Root.tsx 설정:
-   - FPS: 30, 해상도: 1080 x 1350
-   - 카드당: 음성 길이 ÷ 카드 수 (기본 16초 = 480프레임)
-   - `<Audio src={staticFile("narration.mp3")} />`로 음성 전체 재생
-6. 렌더링:
+**Step A: 보일러플레이트 복사**
+`references/remotion-boilerplate/`를 `{output}/remotion/`에 복사한다. 이미 검증된 프로젝트 구조(package.json, tsconfig.json, Root.tsx, CardNewsVideo.tsx, SubtitleOverlay.tsx, cards/CardTemplate.tsx)가 포함되어 있다.
+
 ```bash
-cd "{output}/remotion" && npx remotion render src/index.ts CardNewsVideo --output "../output.mp4"
+cp -r "${SKILL_DIR}/references/remotion-boilerplate/" "{output}/remotion/"
+cd "{output}/remotion" && npm install
 ```
 
-Remotion 미설치 또는 실패 시: "HTML 카드뉴스와 음성 파일은 완성됐어요. 영상은 별도 편집 도구로 합치셔도 돼요."
+**Step B: 카드 컴포넌트 생성**
+card-news.html의 각 카드(section)를 **개별 React 컴포넌트**로 변환한다:
+- `src/cards/Card01.tsx` ~ `Card{N}.tsx`
+- `src/cards/CardTemplate.tsx`의 3가지 패턴(FullBleed/Split/TextOnly) 중 카드에 맞는 것을 선택하여 복사 후 내용 채우기
+- CSS → React 인라인 스타일
+- 이미지: `staticFile("card-XX.png")` 참조
+- 레이아웃 카드별로 다르게 구현
+- `src/cards/index.ts`에 모든 카드 컴포넌트 export 등록
+
+**Step C: data.ts 생성**
+`card-timings.json`을 읽고 `src/data.ts`를 생성한다. 아래 스키마를 준수:
+
+```typescript
+// data.ts 필수 export
+export const FPS = 30;
+export const CARD_WIDTH = 1080;
+export const CARD_HEIGHT = 1350;
+
+// TTS 있을 때: card-timings.json의 frames 배열 그대로 사용
+// 무음일 때: 카드당 150프레임 (5초) 균등 배분
+const ACTUAL_CARD_FRAMES = [310, 512, ...]; // card-timings.json에서 복사
+export const TOTAL_FRAMES = ACTUAL_CARD_FRAMES.reduce((a, b) => a + b, 0);
+
+// CARD_DURATIONS = 실제 프레임 배열
+export const CARD_DURATIONS = ACTUAL_CARD_FRAMES;
+
+// SUBTITLE_LINES: 카드별 나레이션 텍스트 (자막용, 선택)
+export const SUBTITLE_LINES: string[][] = [...];
+```
+
+**Step D: 오디오 + 이미지 복사**
+`{output}/images/card-*.png` + `{output}/audio/cards/card-*.mp3` → `public/` 폴더에 복사
+
+**Step E: 렌더링**
+자막 없는 버전(CardNewsVideoClean)을 기본으로 렌더링:
+```bash
+cd "{output}/remotion" && npx remotion render src/index.ts CardNewsVideoClean --output "../output.mp4" --concurrency=4
+```
+
+Remotion 미설치 또는 실패 시: "HTML 카드뉴스는 완성됐어요. 영상은 별도 편집 도구로 합치셔도 돼요."
 
 출력: `{output}/output.mp4`
 
@@ -348,9 +375,8 @@ Remotion 미설치 또는 실패 시: "HTML 카드뉴스와 음성 파일은 완
 
 ## Scripts
 - **`scripts/generate_image.py`** — 이미지 생성 (google-genai SDK). generate/edit/chat 3가지 모드.
-- **`scripts/tts_openai.py`** — OpenAI TTS 음성 생성 (텍스트 → MP3)
-- **`scripts/tts.sh`** — edge-tts 래퍼 (OpenAI 폴백용)
-- **`scripts/html_to_video.py`** — 카드뉴스 HTML → 슬라이드쇼 MP4
+- **`scripts/tts_openai.py`** — OpenAI TTS 음성 생성 (마크다운 파싱 내장, 텍스트 → MP3)
+- **`scripts/tts.sh`** — edge-tts 래퍼 (폴백용)
 
 ## Settings
 
@@ -358,7 +384,8 @@ Remotion 미설치 또는 실패 시: "HTML 카드뉴스와 음성 파일은 완
 |------|--------|-----------|
 | 이미지 API 키 | (필수) | `.env`의 `NANOBANANA_API_KEY` |
 | 이미지 모델 | gemini-3-pro-image-preview | `.env`의 `NANOBANANA_MODEL` |
-| OpenAI API 키 | (필수, TTS용) | `.env`의 `OPENAI_API_KEY` |
+| OpenAI API 키 | (TTS 선택 시 필수) | `.env`의 `OPENAI_API_KEY` |
 | TTS 음성 | shimmer | "남자 목소리로" → onyx, "차분하게" → nova |
 | 카드 장수 | 10~15장 | "5장으로" 등 요청 시 변경 |
+| 무음 시 카드당 시간 | 5초 | "카드당 3초로" 등 요청 시 변경 |
 | 출력 폴더 | {주제명}-{YYYYMMDD} | 현재 작업 디렉토리에 자동 생성 |
