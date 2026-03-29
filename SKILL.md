@@ -250,29 +250,38 @@ TTS 친화적 텍스트 규칙:
 python3 "${SKILL_DIR}/scripts/tts_openai.py" \
   --input "{output}/05-tts-script.md" \
   --output "{output}/audio/narration.mp3" \
-  --voice "nova" \
+  --voice "shimmer" \
   --env-file "${SKILL_DIR}/.env"
 ```
 
-음성 옵션: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer` (기본: nova)
+음성 옵션: `alloy`, `echo`, `fable`, `onyx`, `nova`, `shimmer` (기본: shimmer)
 
 실패 시: "음성 생성에 실패했어요. 나레이션 원고는 완성됐으니 직접 녹음하셔도 돼요."
 
 출력: `{output}/audio/narration.mp3`
 
-**6-2. Remotion 영상 렌더링:**
+**6-2. Remotion 영상 렌더링 (React 컴포넌트 방식):**
 
-Remotion 프로젝트를 생성하여 카드뉴스 이미지 + TTS 음성을 합성한 영상을 만든다.
+card-news.html의 CSS/레이아웃을 **React JSX 컴포넌트로 변환**하여 Remotion에서 직접 렌더링한다. 캡처 이미지가 아닌 실제 텍스트+이미지를 렌더링하므로 텍스트가 선명하고 애니메이션이 가능하다.
 
-1. `{output}/remotion/` 폴더에 Remotion 프로젝트를 구성한다
-2. `{output}/images/` 의 카드 이미지를 `public/` 폴더에 복사
-3. `{output}/audio/narration.mp3`를 `public/` 폴더에 복사
-4. 카드 수와 음성 길이에 맞게 Root.tsx 설정:
-   - FPS: 30
-   - 카드당 시간: 음성 길이 ÷ 카드 수 (기본 4초)
-   - 해상도: 1080 x 1350 (4:5 세로형)
-   - 전환 효과: 페이드 인/아웃
-5. 렌더링 실행:
+1. `{output}/remotion/` 폴더에 Remotion 프로젝트 구성
+2. card-news.html의 각 카드(section)를 **개별 React 컴포넌트**로 변환:
+   - `src/cards/Card01.tsx` ~ `Card{N}.tsx`
+   - CSS → React 인라인 스타일 (CSSProperties)
+   - 이미지: `staticFile("card-XX.png")` 참조
+   - 한국어 텍스트 내용 그대로 유지
+   - 레이아웃(풀블리드/스플릿/오버레이 등) 카드별로 다르게 구현
+3. 각 카드에 **텍스트 애니메이션** 적용 (useCurrentFrame + interpolate):
+   - 0.3초: 배경/이미지 페이드인
+   - 0.5초: 제목 페이드인 + 슬라이드 업
+   - 0.8초: 본문 텍스트 페이드인
+   - 마지막 0.5초: 전체 페이드아웃
+4. `{output}/images/` + `{output}/audio/narration.mp3` → `public/` 폴더에 복사
+5. Root.tsx 설정:
+   - FPS: 30, 해상도: 1080 x 1350
+   - 카드당: 음성 길이 ÷ 카드 수 (기본 16초 = 480프레임)
+   - `<Audio src={staticFile("narration.mp3")} />`로 음성 전체 재생
+6. 렌더링:
 ```bash
 cd "{output}/remotion" && npx remotion render src/index.ts CardNewsVideo --output "../output.mp4"
 ```
@@ -320,6 +329,6 @@ Remotion 미설치 또는 실패 시: "HTML 카드뉴스와 음성 파일은 완
 | 이미지 API 키 | (필수) | `.env`의 `NANOBANANA_API_KEY` |
 | 이미지 모델 | gemini-3-pro-image-preview | `.env`의 `NANOBANANA_MODEL` |
 | OpenAI API 키 | (필수, TTS용) | `.env`의 `OPENAI_API_KEY` |
-| TTS 음성 | nova | "남자 목소리로" → onyx, "밝은 목소리" → shimmer |
+| TTS 음성 | shimmer | "남자 목소리로" → onyx, "차분하게" → nova |
 | 카드 장수 | 10~15장 | "5장으로" 등 요청 시 변경 |
 | 출력 폴더 | {주제명}-{YYYYMMDD} | 현재 작업 디렉토리에 자동 생성 |

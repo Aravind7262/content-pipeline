@@ -50,7 +50,24 @@ def main():
                           "message": f"입력 파일을 찾을 수 없습니다: {args.input}"}))
         sys.exit(1)
 
-    text = input_path.read_text(encoding='utf-8').strip()
+    raw_text = input_path.read_text(encoding='utf-8').strip()
+
+    # 마크다운 파싱 — 순수 나레이션 텍스트만 추출
+    lines = []
+    for line in raw_text.split('\n'):
+        stripped = line.strip()
+        # 제거: 헤더(#), 구분선(---), 인용(>), 빈 줄
+        if not stripped:
+            continue
+        if stripped.startswith('#'):
+            continue
+        if stripped.startswith('---'):
+            continue
+        if stripped.startswith('>'):
+            continue
+        lines.append(stripped)
+    text = '\n'.join(lines).strip()
+
     if not text:
         print(json.dumps({"success": False, "error": "EMPTY_INPUT",
                           "message": "입력 파일이 비어 있습니다."}))
